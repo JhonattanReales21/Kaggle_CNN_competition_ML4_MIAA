@@ -7,8 +7,8 @@ This project is part of the **Machine Learning 4** course taken in the Master's 
 
 |Name     |  Email   | 
 |---------|-----------------|
-|[Andres Cano](https://github.com/Can0land)|      |
-|[Jhonattan Reales](https://github.com/JhonattanReales21) | reales.jhonattan@gmail.com      |
+|[Andres Cano](https://github.com/Can0land)| andres.cano.consulting@gmail.com     | 
+|[Jhonattan Reales](https://github.com/JhonattanReales21) | jhonatanreales21@gmail.com      |
 
 ## Project Intro/Objective
 
