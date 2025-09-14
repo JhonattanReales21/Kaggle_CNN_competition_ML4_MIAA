@@ -25,24 +25,27 @@ The project was built from scratch in PyTorch and includes:
 - 🧪 Comparison of different **hyperparameters and transformations**.
 
 ## Repository Structure
-📂
-├-- data/  
-│ ├-- images/                   <sub> Original images  </sub>  
-│ └-- annotations.csv           <sub> Annotations (filename, bbox, label) </sub>  
-├-- models/  
-│ ├-- backbone_custom.py        <sub> Custom CNN  </sub>  
-│ ├-- model_full.py             <sub> Complete model (backbone + heads)  </sub>  
-│ └-- pretrained_backbones.py  
-├-- notebooks/  
-│ └-- exploratory_analysis.ipynb  
-├-- utils/  
-│ ├-- dataset.py                <sub> Custom Dataset for PyTorch  </sub>  
-│ ├-- transforms.py             <sub> Data augmentation  </sub>  
-│ └-- metrics.py                <sub> Metrics (IoU, accuracy, F1)  </sub>  
-├-- train.py                    <sub> Main training script  </sub>  
-├-- evaluate.py                 <sub> Evaluation and visualization  </sub>  
-├-- requirements.txt  
-└-- README.md  
+📂 data/
+┣ 📂 images/ <sub>Original images</sub>
+┗ 📄 annotations.csv <sub>Annotations (filename, bbox, label)</sub>
+
+📂 models/
+┣ 📄 backbone_custom.py <sub>Custom CNN</sub>
+┣ 📄 model_full.py <sub>Complete model (backbone + heads)</sub>
+┗ 📄 pretrained_backbones.py <sub>Pretrained architectures</sub>
+
+📂 notebooks/
+┗ 📒 exploratory_analysis.ipynb <sub>Exploratory analysis</sub>
+
+📂 utils/
+┣ 📄 dataset.py <sub>Custom Dataset for PyTorch</sub>
+┣ 📄 transforms.py <sub>Data augmentation</sub>
+┗ 📄 metrics.py <sub>Metrics (IoU, accuracy, F1)</sub>
+
+📄 train.py <sub>Main training script</sub>
+📄 evaluate.py <sub>Evaluation and visualization</sub>
+📄 requirements.txt
+📄 README.md
 
 ## How to Run
 WIP
@@ -54,9 +57,9 @@ WIP
 
 ## Experiments
 We evaluated:
-- 📐 Hyperparameter changes: learning rate, batch size, optimizer
-- 🖼️ Data augmentation techniques: flips, jitter, rotate, resize
-- 🔁 Transfer Learning: ResNet18, MobileNetV2
+- Hyperparameter changes: learning rate, batch size, optimizer
+- Data augmentation techniques: flips, jitter, rotate, resize
+- Transfer Learning: ResNet18, MobileNetV2
 
 ## Methods Used
 WIP
