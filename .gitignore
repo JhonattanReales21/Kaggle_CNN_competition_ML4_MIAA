@@ -1,6 +1,5 @@
-# Ignore the output files but not the subfolders
-data/output/*
-!data/output/**/
+# Ignore the output files and directories
+data/output/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
