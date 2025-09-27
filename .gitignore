@@ -1,3 +1,7 @@
+# Ignore the output files but not the subfolders
+data/output/*
+!data/output/**/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -207,3 +211,4 @@ marimo/_lsp/
 __marimo__/
 
 *.DS_Store
+
