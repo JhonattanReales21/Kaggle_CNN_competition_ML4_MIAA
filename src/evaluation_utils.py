@@ -3,11 +3,13 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import math
 from PIL import Image
-
+import cv2
+from typing import List, Tuple, Union
 from pathlib import Path
 from typing import List, Tuple, Dict
 import numpy as np
 import random
+from types import SimpleNamespace
 
 import torch
 from torch.utils.data import Dataset, DataLoader
@@ -127,24 +129,29 @@ def sanity_check_batch(trainer) -> None:
     print("IoU mean (batch):", float(sum(ious) / len(ious)))
 
 
+## ---------- Plotting images Utilities ---------- ##
+
+
 def denorm(
-    img_t: torch.Tensor,
+    imgs_t: Union[torch.Tensor, List[torch.Tensor]],
     pers_norm: bool = False,
     mean_ls: list[float] | None = None,
     std_ls: list[float] | None = None,
-) -> Image.Image:
+) -> List[Image.Image]:
     """
-    Reverse the normalization of a tensor image and convert it to a PIL Image.
+    Reverse the normalization of one or more tensor images and convert them to PIL Images.
 
     Args:
-        img_t (torch.Tensor): Normalized image tensor (C,H,W).
+        imgs_t (torch.Tensor or List[torch.Tensor]):
+            - Single normalized image tensor (C,H,W), or
+            - List of image tensors.
         pers_norm (bool): If True, use custom mean/std lists.
                           If False, default to ImageNet normalization values.
         mean_ls (list[float], optional): Custom mean values per channel (RGB).
         std_ls (list[float], optional): Custom std values per channel (RGB).
 
     Returns:
-        Image.Image: The de-normalized image as a PIL Image.
+        List[Image.Image]: List of de-normalized images as PIL Images.
     """
 
     if pers_norm:
@@ -157,10 +164,260 @@ def denorm(
         mean = torch.tensor([0.485, 0.456, 0.406])[:, None, None]
         std = torch.tensor([0.229, 0.224, 0.225])[:, None, None]
 
-    # Reverse normalization
-    img = img_t.cpu() * std + mean
+    def _denorm_single(img_t: torch.Tensor) -> Image.Image:
+        """Denormalize a single tensor and convert to PIL Image."""
+        img = img_t.cpu() * std + mean
+        img = (img.clamp(0, 1) * 255).byte().permute(1, 2, 0).numpy()
+        return Image.fromarray(img)
 
-    # Clamp to valid range [0,1], convert to 0–255 uint8, then to HWC numpy
-    img = (img.clamp(0, 1) * 255).byte().permute(1, 2, 0).numpy()
+    # Handle both single tensor and list of tensors
+    if isinstance(imgs_t, torch.Tensor):
+        return [_denorm_single(imgs_t)]
+    elif isinstance(imgs_t, list):
+        return [_denorm_single(img) for img in imgs_t]
+    else:
+        raise TypeError("imgs_t must be a torch.Tensor or a list of torch.Tensor.")
 
-    return Image.fromarray(img)
+
+def draw_annotations(
+    imgs: List[np.ndarray],
+    bboxes: List[List[Tuple[int, int, int, int]]],
+    classes: List[List[int]] = None,
+    colors: Union[Tuple[int, int, int], List[Tuple[int, int, int]]] = (0, 255, 0),
+    thickness: int = 2,
+    font_scale: int = 1,
+    origin: Tuple[int, int] = (10, 30),
+    prefix: str = "",
+    id2obj: dict = None,
+) -> List[np.ndarray]:
+    """
+    Draw bounding boxes and optionally class labels on a list of images.
+
+    Args:
+        imgs (List[np.ndarray]):
+            List of images in BGR format (OpenCV-style).
+        bboxes (List[List[Tuple[int, int, int, int]]]):
+            List of lists of bounding boxes per image.
+            Each bounding box is (xmin, ymin, xmax, ymax) in pixels.
+        classes (List[List[int]], optional):
+            List of lists of class IDs per image. If None, only boxes are drawn.
+        colors (Tuple[int,int,int] or List[Tuple[int,int,int]], optional):
+            Single BGR color for all boxes/text, or a list of colors (one per box).
+            Default is green (0,255,0).
+        thickness (int, optional):
+            Thickness of bounding box lines. Default is 2.
+        font_scale (int, optional):
+            Font size for class labels. Default is 1.
+        origin (Tuple[int,int], optional):
+            Base (x, y) coordinates where text is drawn. Default is (10,30).
+        prefix (str, optional):
+            String prefix to prepend to each class name (e.g., "pred: "). Default is "".
+        id2obj (dict, optional):
+            Mapping from class ID to class name. Required if `classes` is provided.
+
+    Returns:
+        List[np.ndarray]: List of images with annotations drawn.
+
+    Notes:
+        - If `colors` is a single tuple, the same color is used for all annotations.
+        - If `classes` is provided, its length per image must match the number of bboxes.
+        - This function modifies the input images in place.
+    """
+    annotated_imgs = []
+
+    for img_idx, img in enumerate(imgs):
+        img_copy = img.copy()
+        boxes = bboxes[img_idx]
+        cls_ids = classes[img_idx] if classes is not None else [None] * len(boxes)
+
+        # Expand single color to list if needed
+        if isinstance(colors, tuple):
+            color_list = [colors] * len(boxes)
+        else:
+            color_list = colors
+
+        for (xmin, ymin, xmax, ymax), cls_id, color in zip(boxes, cls_ids, color_list):
+            # Draw bounding box
+            cv2.rectangle(img_copy, (xmin, ymin), (xmax, ymax), color, thickness)
+
+            # Draw class label if provided
+            if cls_id is not None and id2obj is not None:
+                class_name = id2obj.get(cls_id, str(cls_id))
+                cv2.putText(
+                    img_copy,
+                    f"{prefix}{class_name}",
+                    origin,
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    font_scale,
+                    color,
+                    2,
+                    cv2.LINE_AA,
+                )
+
+        annotated_imgs.append(img_copy)
+
+    return annotated_imgs
+
+
+def show_image_grid(imgs: List[np.ndarray], n_cols: int = 2, figsize=(12, 8)) -> None:
+    """
+    Display a list of images in a grid.
+
+    Args:
+        imgs (List[np.ndarray]): List of images (BGR format).
+        n_cols (int): Number of columns in the grid.
+        figsize (tuple): Size of the matplotlib figure.
+
+    Returns:
+        None
+    """
+    if len(imgs) == 0:
+        raise ValueError("No images provided.")
+
+    n_rows = int(np.ceil(len(imgs) / n_cols))
+
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize)
+    axes = np.array(axes).reshape(-1)  # Flatten axes for easy iteration
+
+    for i, ax in enumerate(axes):
+        if i < len(imgs):
+            # Convert BGR (OpenCV) to RGB (matplotlib)
+            img_rgb = imgs[i][..., ::-1]
+            ax.imshow(img_rgb)
+            # ax.set_title(f"Image {i+1}")
+        ax.axis("off")
+
+    plt.tight_layout()
+    plt.show()
+
+
+def visualize_predictions(
+    model_class,
+    checkpoint_path: str,
+    dl_valid,
+    n_images: int = 3,
+    n_cols: int = 3,
+    threshold: float = 0.5,
+    device: str = "cuda",
+):
+    """
+    Load a model checkpoint, run predictions on a random validation batch,
+    and visualize images with ground-truth and predicted bounding boxes.
+
+    Args:
+        model_class (nn.Module): The model class (inherits nn.Module).
+        checkpoint_path (str): Path to the .pt checkpoint file.
+        dl_valid (DataLoader): Validation dataloader.
+        n_cols (int): Number of columns in the visualization grid.
+        threshold (float): Classification threshold (default=0.5).
+        device (str): Device to run inference on ("cuda" or "cpu").
+
+    Returns:
+        None. Displays a grid of annotated images.
+    """
+    # ------------------ Load model and checkpoint ------------------
+    ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    cfg = SimpleNamespace(**ckpt["cfg"])  # recover cfg as Namespace
+
+    # Instantiate model and load state dict
+    if isinstance(model_class, nn.Module):
+        model = model_class.to(device)  # Is already an instance
+    else:
+        model = model_class().to(device)  # Is a class
+    model.load_state_dict(ckpt["model_state"])
+    model.eval()
+
+    # ------------------ Pick a random validation batch ------------------
+    dl_list = list(dl_valid)
+    imgs, t_boxes01, t_cls, fnames = random.choice(dl_list)
+
+    # If n_images is set, select a random subset
+    if n_images is not None and n_images < len(imgs):
+        idxs = random.sample(range(len(imgs)), n_images)
+        imgs = imgs[idxs]
+        t_boxes01 = t_boxes01[idxs]
+        t_cls = t_cls[idxs]
+        fnames = [fnames[i] for i in idxs]
+
+    imgs, t_boxes01, t_cls = imgs.to(device), t_boxes01.to(device), t_cls.to(device)
+
+    # ------------------ Forward pass ------------------
+    with torch.no_grad():
+        logits, p_boxes01 = model(imgs)
+        probs = torch.sigmoid(logits)
+        if probs.ndim > 1 and probs.shape[1] == 1:
+            probs = probs.squeeze(1)
+        pred_cls = (probs > threshold).long()
+
+    # ------------------ Convert boxes to pixel coordinates ------------------
+    sz = float(cfg.img_size)
+    gt_boxes = (t_boxes01 * sz).cpu().numpy()
+    pred_boxes = (p_boxes01 * sz).cpu().numpy()
+
+    # ------------------ Denormalize images for visualization ------------------
+    imgs_denorm = denorm(
+        [img for img in imgs],
+        pers_norm=True,
+        mean_ls=cfg.norm_mean,
+        std_ls=cfg.norm_std,
+    )  # list of tensors as input
+
+    # Convert PIL -> numpy (BGR) for OpenCV-style drawing
+    imgs_np = [np.array(img)[..., ::-1] for img in imgs_denorm]
+
+    # ------------------ Prepare annotations ------------------
+    gt_bboxes, gt_classes = [], []
+    pred_bboxes, pred_classes = [], []
+
+    for i in range(len(imgs)):
+        gt_bboxes.append([tuple(map(int, gt_boxes[i]))])
+        pred_bboxes.append([tuple(map(int, pred_boxes[i]))])
+
+        # Map numeric class back to string
+        gt_cls_id = int(t_cls[i].item())
+        pred_cls_id = int(pred_cls[i].item())
+
+        gt_classes.append([gt_cls_id])
+        pred_classes.append([pred_cls_id])
+
+    # ------------------ Draw GT in green ------------------
+    imgs_annot = draw_annotations(
+        imgs_np,
+        gt_bboxes,
+        classes=gt_classes,
+        colors=(0, 255, 0),
+        prefix="gt:",
+        id2obj=LABEL_TO_CLASS,
+    )
+
+    # ------------------ Draw predictions in red ------------------
+    imgs_annot = draw_annotations(
+        imgs_annot,
+        pred_bboxes,
+        classes=pred_classes,
+        colors=(0, 0, 255),
+        prefix="pred:",
+        id2obj=LABEL_TO_CLASS,
+    )
+
+    # ------------------ Compute IoU per image ------------------
+    ious = []
+    for i in range(len(imgs)):
+        gt_box = torch.tensor(gt_boxes[i], dtype=torch.float32)
+        pr_box = torch.tensor(pred_boxes[i], dtype=torch.float32)
+        ious.append(iou(gt_box, pr_box).item())
+
+    # ------------------ Show images in grid ------------------
+    n_rows = int(np.ceil(len(imgs_annot) / n_cols))
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(12, 8))
+    axes = np.array(axes).reshape(-1)
+
+    for i, ax in enumerate(axes):
+        if i < len(imgs_annot):
+            img_rgb = imgs_annot[i][..., ::-1]  # BGR -> RGB
+            ax.imshow(img_rgb)
+            ax.set_title(f"IoU={ious[i]:.2f}")
+        ax.axis("off")
+
+    plt.tight_layout()
+    plt.show()

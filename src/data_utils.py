@@ -16,6 +16,7 @@ from PIL import Image
 import os
 
 CLASS_TO_LABEL = {"mask": 1, "no-mask": 0}
+LABEL_TO_CLASS = {1: "mask", 0: "no-mask"}
 
 DEFAULT_COLS = {
     "filename": "filename",
@@ -29,7 +30,7 @@ DEFAULT_COLS = {
 
 def compute_mean_std_image_dir(image_dir, image_filenames):
     """
-    Compute the mean and std of a list of images in a directory.
+    Compute the mean and std of a list of raw images in a directory.
     """
     transform = transforms.ToTensor()
     means, stds = [], []
@@ -53,7 +54,7 @@ def compute_mean_std_image_dir(image_dir, image_filenames):
     return mean.tolist(), std.tolist()
 
 
-def show_images_with_bboxes(df, indices, img_dir, cols=3):
+def show_raw_images_with_bboxes(df, indices, img_dir, cols=3):
     n = len(indices)
     rows = math.ceil(n / cols)
 
