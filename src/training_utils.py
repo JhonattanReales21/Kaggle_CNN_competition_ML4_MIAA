@@ -170,12 +170,12 @@ class Trainer_base:
     def __init__(
         self,
         model,
-        train_dataset,
-        valid_dataset,
         cfg,
-        optimizer=None,
-        scheduler=None,
-        device="cuda",
+        train_dataset: Dataset,
+        valid_dataset: Dataset,
+        optimizer: Optional[torch.optim.Optimizer] = None,
+        scheduler: bool = False,
+        device: str = "cuda",
     ):
         """
         Initialize the Trainer.
@@ -188,7 +188,7 @@ class Trainer_base:
                 (epochs, lr, weight_decay, cls_loss_w, box_loss_w, beta_smoothl1, etc.).
             optimizer (torch.optim.Optimizer, optional): Optimizer for training.
                 If None, AdamW will be used with cfg.lr and cfg.weight_decay.
-            scheduler (torch.optim.lr_scheduler, optional): LR scheduler.
+            scheduler (bool, optional): Whether to use a learning rate scheduler.
             device (str): Training device ("cuda" or "cpu").
         """
         self.model = model.to(device)
@@ -199,15 +199,23 @@ class Trainer_base:
         self._best_iou = -1.0
 
         # Optimizer
-        self.opt = optimizer or torch.optim.AdamW(
-            self.model.parameters(), lr=self.cfg.lr, weight_decay=self.cfg.weight_decay
-        )
+        if optimizer:
+            self.opt = optimizer
+        else:
+            self.opt = torch.optim.AdamW(
+                self.model.parameters(),
+                lr=self.cfg.lr,
+                weight_decay=self.cfg.weight_decay,
+            )
+
+        # Scheduler (optional)
+        if scheduler:
+            self.sched = torch.optim.lr_scheduler.CosineAnnealingLR(
+                self.opt, T_max=self.cfg.epochs
+            )
 
         # Accuracy metric
         self.acc_metric = BinaryAccuracy().to(DEVICE)
-
-        # Scheduler (optional)
-        self.sched = scheduler
 
         # Create the dataloaders
         num_workers = max(
