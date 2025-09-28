@@ -125,4 +125,103 @@ class TwoHeadNetVOC(nn.Module):
         return logits, boxes
 
 
+class RobustTwoHeadNetVOC(nn.Module):
+    """Two-headed net with Conv1D-based regression head for richer VOC bbox predictions."""
+
+    def __init__(
+        self,
+        backbone: nn.Module,
+        feat_dim: int = 512,
+        dropout: float = 0.3,
+        g_pool_bbox: int = 8,
+    ):
+        super().__init__()
+        self.backbone = backbone
+
+        # ---- Classification head: 3 Linear layers ----
+        self.cls_head = nn.Sequential(
+            nn.Dropout(dropout),
+            nn.Linear(feat_dim, feat_dim),
+            nn.BatchNorm1d(feat_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(feat_dim, feat_dim // 4),
+            nn.BatchNorm1d(feat_dim // 4),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(feat_dim // 4, 1),
+        )
+
+        # ---- Box regression head: Conv1d over features ----
+        self.box_head = nn.Sequential(
+            nn.Unflatten(1, (1, feat_dim)),  # (B, feat_dim) → (B, 1, feat_dim)
+            nn.Conv1d(1, 16, kernel_size=3, padding=1),
+            nn.BatchNorm1d(16),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Conv1d(16, 32, kernel_size=3, padding=1),
+            nn.BatchNorm1d(32),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.AdaptiveAvgPool1d(g_pool_bbox),
+            nn.Flatten(),
+            nn.Linear(32 * g_pool_bbox, 64),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(64, 4),  # VOC bbox
+        )
+
+    def forward(self, x):
+        feats = self.backbone(x)
+        logits = self.cls_head(feats).squeeze(1)
+        boxes = torch.sigmoid(self.box_head(feats))
+        return logits, boxes
+
+
+class RobustTwoHeadNetVOC_V2(nn.Module):
+    """Two-headed net with strong MLP head for both classification and regression tasks"""
+
+    def __init__(
+        self,
+        backbone: nn.Module,
+        feat_dim: int = 512,
+        dropout: float = 0.3,
+    ):
+        super().__init__()
+        self.backbone = backbone
+
+        # ---- Classification head: 3 Linear layers ----
+        self.cls_head = nn.Sequential(
+            nn.Dropout(dropout),
+            nn.Linear(feat_dim, feat_dim),
+            nn.BatchNorm1d(feat_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(feat_dim, feat_dim // 4),
+            nn.BatchNorm1d(feat_dim // 4),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(feat_dim // 4, 1),
+        )
+
+        # ---- Box regression head: deeper MLP ----
+        self.box_head = nn.Sequential(
+            nn.Linear(feat_dim, feat_dim),
+            nn.BatchNorm1d(feat_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(feat_dim, feat_dim // 2),
+            nn.BatchNorm1d(feat_dim // 2),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(feat_dim // 2, 4),  # VOC format (x1,y1,x2,y2)
+        )
+
+    def forward(self, x):
+        feats = self.backbone(x)
+        logits = self.cls_head(feats).squeeze(1)
+        boxes = torch.sigmoid(self.box_head(feats))
+        return logits, boxes
+
+
 ## ---------- CNN pre-trained models (Transfer learning) ---------- ##
