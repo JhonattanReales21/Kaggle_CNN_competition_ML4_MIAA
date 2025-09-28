@@ -2,6 +2,8 @@ import torch
 import torch.nn.functional as F
 import torch.nn as nn
 
+from torchmetrics.classification import BinaryAccuracy
+
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -168,8 +170,8 @@ class Trainer_base:
     def __init__(
         self,
         model,
-        dl_train,
-        dl_valid,
+        train_dataset,
+        valid_dataset,
         cfg,
         optimizer=None,
         scheduler=None,
@@ -180,8 +182,8 @@ class Trainer_base:
 
         Args:
             model (nn.Module): The CNN model (with classification and bbox heads).
-            dl_train (DataLoader): PyTorch DataLoader for training data.
-            dl_valid (DataLoader): PyTorch DataLoader for validation data.
+            train_dataset (Dataset): PyTorch Dataset for training data.
+            valid_dataset (Dataset): PyTorch Dataset for validation data.
             cfg (Namespace or dict): Configuration object with hyperparameters
                 (epochs, lr, weight_decay, cls_loss_w, box_loss_w, beta_smoothl1, etc.).
             optimizer (torch.optim.Optimizer, optional): Optimizer for training.
@@ -190,8 +192,6 @@ class Trainer_base:
             device (str): Training device ("cuda" or "cpu").
         """
         self.model = model.to(device)
-        self.dl_train = dl_train
-        self.dl_valid = dl_valid
         self.cfg = cfg
         self.device = device
 
@@ -203,8 +203,35 @@ class Trainer_base:
             self.model.parameters(), lr=self.cfg.lr, weight_decay=self.cfg.weight_decay
         )
 
+        # Accuracy metric
+        self.acc_metric = BinaryAccuracy().to(DEVICE)
+
         # Scheduler (optional)
         self.sched = scheduler
+
+        # Create the dataloaders
+        num_workers = max(
+            4, int(os.cpu_count() / 2)
+        )  # Use half of the available CPU cores, at least 4
+
+        self.dl_train = DataLoader(
+            train_dataset,
+            batch_size=self.cfg.batch_size,
+            shuffle=True,
+            num_workers=num_workers,
+            pin_memory=(DEVICE == "cuda"),
+            persistent_workers=(num_workers > 0),
+            prefetch_factor=2,
+        )
+        self.dl_valid = DataLoader(
+            valid_dataset,
+            batch_size=self.cfg.batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            pin_memory=(DEVICE == "cuda"),
+            persistent_workers=(num_workers > 0),
+            prefetch_factor=2,
+        )
 
     # --------------------------------------------------------
     def _monitor_value(self, metrics: dict):
@@ -275,7 +302,7 @@ class Trainer_base:
         # ----- Metrics (no gradient) -----
         with torch.no_grad():
             probs = torch.sigmoid(logits)
-            self.cfg.acc_metric.update(probs, t_cls)
+            self.acc_metric.update(probs, t_cls)
 
             # IoU in pixels (per sample, averaged)
             sz = float(self.cfg.img_size)
@@ -309,7 +336,7 @@ class Trainer_base:
         n_batches = 0
 
         # Reset accuracy metric at the start of the epoch
-        self.cfg.acc_metric.reset()
+        self.acc_metric.reset()
 
         for batch in loader:
             loss, cls_l, box_l, miou = self._step_batch(batch, train=train)
@@ -319,7 +346,7 @@ class Trainer_base:
             iou_sum += miou
             n_batches += 1
 
-        acc = self.cfg.acc_metric.compute().item() if n_batches > 0 else 0.0
+        acc = self.acc_metric.compute().item() if n_batches > 0 else 0.0
 
         return {
             "loss": total_loss / max(1, n_batches),
@@ -362,9 +389,7 @@ class Trainer_base:
             # Always track best IoU
             if vl["mean_iou"] > self._best_iou:
                 self._best_iou = vl["mean_iou"]
-                self.save_model(
-                    f"best_val_iou_model.pt", output_dir=self.cfg.output_dir
-                )
+                self.save_model(f"best_iou_model.pt", output_dir=self.cfg.output_dir)
 
             # Check monitored metric
             monitor_value = self._monitor_value(vl)

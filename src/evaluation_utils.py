@@ -186,7 +186,7 @@ def draw_annotations(
     colors: Union[Tuple[int, int, int], List[Tuple[int, int, int]]] = (0, 255, 0),
     thickness: int = 2,
     font_scale: int = 1,
-    origin: Tuple[int, int] = (10, 30),
+    origin: Union[str, Tuple[int, int]] = (10, 30),  # could be "closed" or (x, y)
     prefix: str = "",
     id2obj: dict = None,
 ) -> List[np.ndarray]:
@@ -208,8 +208,10 @@ def draw_annotations(
             Thickness of bounding box lines. Default is 2.
         font_scale (int, optional):
             Font size for class labels. Default is 1.
-        origin (Tuple[int,int], optional):
-            Base (x, y) coordinates where text is drawn. Default is (10,30).
+        origin (str or tuple, optional):
+            - "closed": place text near the bounding box (xmin, ymin + 5).
+            - (x, y): fixed coordinates.
+            Default is (10, 30).
         prefix (str, optional):
             String prefix to prepend to each class name (e.g., "pred: "). Default is "".
         id2obj (dict, optional):
@@ -243,14 +245,23 @@ def draw_annotations(
             # Draw class label if provided
             if cls_id is not None and id2obj is not None:
                 class_name = id2obj.get(cls_id, str(cls_id))
+
+                # text position
+                if isinstance(origin, str) and origin == "closed":
+                    text_pos = (xmin, max(ymin + 10, 10))  # 10px above the box
+                elif isinstance(origin, tuple):
+                    text_pos = origin
+                else:
+                    raise ValueError("origin must be 'closed' or a tuple (x, y)")
+
                 cv2.putText(
                     img_copy,
                     f"{prefix}{class_name}",
-                    origin,
+                    text_pos,
                     cv2.FONT_HERSHEY_SIMPLEX,
                     font_scale,
                     color,
-                    2,
+                    1,
                     cv2.LINE_AA,
                 )
 
@@ -294,21 +305,30 @@ def show_image_grid(imgs: List[np.ndarray], n_cols: int = 2, figsize=(12, 8)) ->
 def visualize_predictions(
     model_class,
     checkpoint_path: str,
-    dl_valid,
+    norm_mean: List[float],
+    norm_std: List[float],
+    valid_dataset: Dataset,
     n_images: int = 3,
     n_cols: int = 3,
+    figsize=(12, 8),
+    annotations_dict: dict = None,
     threshold: float = 0.5,
     device: str = "cuda",
 ):
     """
-    Load a model checkpoint, run predictions on a random validation batch,
+    Load a model checkpoint, run predictions on a random validation sample,
     and visualize images with ground-truth and predicted bounding boxes.
 
     Args:
         model_class (nn.Module): The model class (inherits nn.Module).
         checkpoint_path (str): Path to the .pt checkpoint file.
-        dl_valid (DataLoader): Validation dataloader.
+        norm_mean (List[float]): Mean values for normalization (R, G, B).
+        norm_std (List[float]): Std values for normalization (R, G, B).
+        valid_dataset (Dataset): Validation dataset.
+        n_images (int): Number of random images to visualize from the batch.
         n_cols (int): Number of columns in the visualization grid.
+        figsize (tuple): Size of the matplotlib figure.
+        annotations_dict (dict, optional): Additional annotations to display.
         threshold (float): Classification threshold (default=0.5).
         device (str): Device to run inference on ("cuda" or "cpu").
 
@@ -327,19 +347,34 @@ def visualize_predictions(
     model.load_state_dict(ckpt["model_state"])
     model.eval()
 
-    # ------------------ Pick a random validation batch ------------------
-    dl_list = list(dl_valid)
-    imgs, t_boxes01, t_cls, fnames = random.choice(dl_list)
+    # ------------------ Pick random validation sample(s) ------------------
+    if n_images is None or n_images == 1:
+        # Choose a single random image
+        idx = random.randrange(len(valid_dataset))
+        imgs, t_boxes01, t_cls, fnames = valid_dataset[idx]
 
-    # If n_images is set, select a random subset
-    if n_images is not None and n_images < len(imgs):
-        idxs = random.sample(range(len(imgs)), n_images)
-        imgs = imgs[idxs]
-        t_boxes01 = t_boxes01[idxs]
-        t_cls = t_cls[idxs]
-        fnames = [fnames[i] for i in idxs]
+    else:
+        # Choose a random subset of size n_images
+        idxs = random.sample(range(len(valid_dataset)), n_images)
 
+        imgs_list, t_boxes_list, t_cls_list, fnames_list = [], [], [], []
+        for i in idxs:
+            img, box, cls, fname = valid_dataset[i]
+            imgs_list.append(img)
+            t_boxes_list.append(box)
+            t_cls_list.append(cls)
+            fnames_list.append(fname)
+
+        # Stack tensors (tensors must have same shape)
+        imgs = torch.stack(imgs_list)
+        t_boxes01 = torch.stack(t_boxes_list)
+        t_cls = torch.stack(t_cls_list)
+        fnames = fnames_list
+
+    # Move to device
     imgs, t_boxes01, t_cls = imgs.to(device), t_boxes01.to(device), t_cls.to(device)
+
+    print("# of images selected:", len(fnames))
 
     # ------------------ Forward pass ------------------
     with torch.no_grad():
@@ -355,11 +390,17 @@ def visualize_predictions(
     pred_boxes = (p_boxes01 * sz).cpu().numpy()
 
     # ------------------ Denormalize images for visualization ------------------
+
+    if norm_mean is None and norm_std is None:
+        # use ImageNet values
+        norm_mean = [0.485, 0.456, 0.406]
+        norm_std = [0.229, 0.224, 0.225]
+
     imgs_denorm = denorm(
         [img for img in imgs],
         pers_norm=True,
-        mean_ls=cfg.norm_mean,
-        std_ls=cfg.norm_std,
+        mean_ls=norm_mean,
+        std_ls=norm_std,
     )  # list of tensors as input
 
     # Convert PIL -> numpy (BGR) for OpenCV-style drawing
@@ -380,14 +421,19 @@ def visualize_predictions(
         gt_classes.append([gt_cls_id])
         pred_classes.append([pred_cls_id])
 
+    if annotations_dict is None:
+        annotations_dict = {}
+
     # ------------------ Draw GT in green ------------------
+
     imgs_annot = draw_annotations(
         imgs_np,
         gt_bboxes,
         classes=gt_classes,
         colors=(0, 255, 0),
-        prefix="gt:",
+        prefix="",
         id2obj=LABEL_TO_CLASS,
+        **annotations_dict,
     )
 
     # ------------------ Draw predictions in red ------------------
@@ -398,6 +444,7 @@ def visualize_predictions(
         colors=(0, 0, 255),
         prefix="pred:",
         id2obj=LABEL_TO_CLASS,
+        **annotations_dict,
     )
 
     # ------------------ Compute IoU per image ------------------
@@ -409,7 +456,7 @@ def visualize_predictions(
 
     # ------------------ Show images in grid ------------------
     n_rows = int(np.ceil(len(imgs_annot) / n_cols))
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(12, 8))
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize)
     axes = np.array(axes).reshape(-1)
 
     for i, ax in enumerate(axes):
