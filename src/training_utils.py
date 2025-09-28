@@ -424,7 +424,7 @@ class Trainer_base:
                     if self.cfg.verbose:
                         print(f"\nEarly stopping at epoch {epoch}:\n")
 
-                        # Final logging before early stopping break
+                        # Final logging when early stopping is triggered
                         print(
                             f"Best {monitor}: {best_val:.4f}\n"
                             f"Train: loss: {tr['loss']:.4f}, acc: {tr['acc']:.3f}, IoU: {tr['mean_iou']:.3f}\n"
@@ -432,8 +432,8 @@ class Trainer_base:
                         )
                     break
 
-        # Final logging
-        if self.cfg.verbose:
+        # Final logging - when training completes without early stopping
+        if wait < es_patience and self.cfg.verbose:
             print(
                 f"Best {monitor}: {best_val:.4f}\n"
                 f"Train: loss: {tr['loss']:.4f}, acc: {tr['acc']:.3f}, IoU: {tr['mean_iou']:.3f}\n"
