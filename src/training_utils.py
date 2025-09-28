@@ -386,7 +386,7 @@ class Trainer_base:
                 }
             )
 
-            # Always track best IoU
+            # Always track best IoU - Save checkpoint
             if vl["mean_iou"] > self._best_iou:
                 self._best_iou = vl["mean_iou"]
                 self.save_model(f"best_iou_model.pt", output_dir=self.cfg.output_dir)
@@ -399,18 +399,19 @@ class Trainer_base:
                 else (monitor_value > best_val)
             )
 
-            # Logging, print every n epochs
+            # Logging, print every n epochs, also print first and last epoch
             if (epoch == 1 or epoch == self.cfg.epochs) or (
                 epoch % self.cfg.logging_step == 0
             ):
-                print(
-                    f"Epoch {epoch:03d} | LR {self.opt.param_groups[0]['lr']:.2e} | "
-                    f"Train -- loss: {tr['loss']:.4f}, acc: {tr['acc']:.3f}, IoU: {tr['mean_iou']:.3f} | "
-                    f"Valid -- loss: {vl['loss']:.4f}, acc: {vl['acc']:.3f}, IoU: {vl['mean_iou']:.3f} | "
-                    f"Monitor({monitor}): {monitor_value:.4f}"
-                )
+                if self.cfg.verbose:
+                    print(
+                        f"Epoch {epoch:03d} | LR {self.opt.param_groups[0]['lr']:.2e} | "
+                        f"Train -- loss: {tr['loss']:.4f}, acc: {tr['acc']:.3f}, IoU: {tr['mean_iou']:.3f} | "
+                        f"Valid -- loss: {vl['loss']:.4f}, acc: {vl['acc']:.3f}, IoU: {vl['mean_iou']:.3f} | "
+                        f"Monitor({monitor}): {monitor_value:.4f}"
+                    )
 
-            # Early stopping check
+            # Early stopping check and save best monitored model (checkpoint)
             if better:
                 best_val = monitor_value
                 wait = 0
@@ -420,13 +421,24 @@ class Trainer_base:
             else:
                 wait += 1
                 if wait >= es_patience:
-                    print(f"\nEarly stopping at epoch {epoch}:\n")
-                    print(
-                        f"Best {monitor}: {best_val:.4f}\n"
-                        f"Train: loss: {tr['loss']:.4f}, acc: {tr['acc']:.3f}, IoU: {tr['mean_iou']:.3f}\n"
-                        f"Valid: loss: {vl['loss']:.4f}, acc: {vl['acc']:.3f}, IoU: {vl['mean_iou']:.3f}"
-                    )
+                    if self.cfg.verbose:
+                        print(f"\nEarly stopping at epoch {epoch}:\n")
+
+                        # Final logging before early stopping break
+                        print(
+                            f"Best {monitor}: {best_val:.4f}\n"
+                            f"Train: loss: {tr['loss']:.4f}, acc: {tr['acc']:.3f}, IoU: {tr['mean_iou']:.3f}\n"
+                            f"Valid: loss: {vl['loss']:.4f}, acc: {vl['acc']:.3f}, IoU: {vl['mean_iou']:.3f}"
+                        )
                     break
+
+        # Final logging
+        if self.cfg.verbose:
+            print(
+                f"Best {monitor}: {best_val:.4f}\n"
+                f"Train: loss: {tr['loss']:.4f}, acc: {tr['acc']:.3f}, IoU: {tr['mean_iou']:.3f}\n"
+                f"Valid: loss: {vl['loss']:.4f}, acc: {vl['acc']:.3f}, IoU: {vl['mean_iou']:.3f}"
+            )
 
         return history
 

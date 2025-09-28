@@ -126,7 +126,7 @@ def sanity_check_batch(trainer) -> None:
 
     # Compute IoU for each sample in the batch
     ious = [iou(pred_boxes[i], gt_boxes[i]).item() for i in range(len(pred_boxes))]
-    print("IoU mean (batch):", float(sum(ious) / len(ious)))
+    print("IoU mean (Random batch):", float(sum(ious) / len(ious)))
 
 
 ## ---------- Plotting images Utilities ---------- ##
