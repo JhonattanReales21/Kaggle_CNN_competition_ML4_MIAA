@@ -11,6 +11,17 @@ import numpy as np
 import random
 from types import SimpleNamespace
 
+import plotly
+import optuna
+from optuna.visualization import (
+    plot_optimization_history,
+    plot_param_importances,
+    plot_parallel_coordinate,
+    plot_slice,
+    plot_contour,
+    plot_pareto_front,
+)
+
 import torch
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
@@ -126,7 +137,7 @@ def sanity_check_batch(trainer) -> None:
 
     # Compute IoU for each sample in the batch
     ious = [iou(pred_boxes[i], gt_boxes[i]).item() for i in range(len(pred_boxes))]
-    print("IoU mean (batch):", float(sum(ious) / len(ious)))
+    print("IoU mean (Random batch):", float(sum(ious) / len(ious)))
 
 
 ## ---------- Plotting images Utilities ---------- ##
@@ -468,3 +479,84 @@ def visualize_predictions(
 
     plt.tight_layout()
     plt.show()
+
+
+## ------------ Optuna visualizations utilities -------------------- ##
+
+
+def analyze_optuna_study(
+    study, top_n=5, export_csv=True, csv_name="optuna_results.csv"
+):
+    """
+    Analyze an Optuna study with visualizations and trial summaries.
+
+    Args:
+        study: Optuna study object (after optimization).
+        top_n (int): Number of top trials to display.
+        export_csv (bool): If True, export results to CSV.
+        csv_name (str): Filename for the exported CSV.
+    """
+
+    # -------------------------------
+    # Export results to CSV
+    # -------------------------------
+    df_trials = study.trials_dataframe()
+    if export_csv:
+        df_trials.to_csv(csv_name, index=False)
+        print(f"[INFO] Results exported to {csv_name}")
+
+    # -------------------------------
+    # Show best trials
+    # -------------------------------
+    print("\n===== Top Trials =====")
+    sorted_trials = sorted(
+        study.trials,
+        key=lambda t: (t.values[0], t.values[1]),  # sort by IoU first, then ACC
+        reverse=True,
+    )
+    for t in sorted_trials[:top_n]:
+        print(
+            f"Trial {t.number} | IoU={t.values[0]:.4f}, ACC={t.values[1]:.4f}\n"
+            f"Params: {t.params}\n"
+        )
+
+    # -------------------------------
+    # Visualization plots
+    # -------------------------------
+    print("\n[INFO] Generating interactive plots...")
+
+    # 1. Optimization history: track objective values across trials
+    fig1 = plot_optimization_history(study)
+    fig1.show()
+
+    # # 2. Parameter importance (for IoU)
+    # fig2 = plot_param_importances(
+    #     study, target=lambda t: t.values[0], target_name="IoU"
+    # )
+    # fig2.show()
+
+    # # 3. Parameter importance (for ACC)
+    # fig3 = plot_param_importances(
+    #     study, target=lambda t: t.values[1], target_name="ACC"
+    # )
+    # fig3.show()
+
+    # # 4. Parallel coordinate plot: explore hyperparameter interactions
+    # fig4 = plot_parallel_coordinate(
+    #     study, target=lambda t: t.values[0], target_name="IoU"
+    # )
+    # fig4.show()
+
+    # # 5. Slice plots: effect of each parameter on IoU
+    # fig5 = plot_slice(study, target=lambda t: t.values[0], target_name="IoU")
+    # fig5.show()
+
+    # # 6. Contour plots: 2D interactions between parameters
+    # fig6 = plot_contour(study, target=lambda t: t.values[0], target_name="IoU")
+    # fig6.show()
+
+    # # 7. Pareto front: trade-off between IoU and ACC (multi-objective)
+    # fig7 = plot_pareto_front(study, target_names=["IoU", "ACC"])
+    # fig7.show()
+
+    print("[INFO] Analysis complete. Use the interactive plots to explore the results.")

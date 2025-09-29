@@ -7,6 +7,8 @@ from torchmetrics.classification import BinaryAccuracy
 import numpy as np
 import matplotlib.pyplot as plt
 
+from typing import Optional
+
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 import os
@@ -170,12 +172,12 @@ class Trainer_base:
     def __init__(
         self,
         model,
-        train_dataset,
-        valid_dataset,
         cfg,
-        optimizer=None,
-        scheduler=None,
-        device="cuda",
+        train_dataset: Dataset,
+        valid_dataset: Dataset,
+        optimizer: Optional[torch.optim.Optimizer] = None,
+        scheduler: bool = False,
+        device: str = "cuda",
     ):
         """
         Initialize the Trainer.
@@ -188,7 +190,7 @@ class Trainer_base:
                 (epochs, lr, weight_decay, cls_loss_w, box_loss_w, beta_smoothl1, etc.).
             optimizer (torch.optim.Optimizer, optional): Optimizer for training.
                 If None, AdamW will be used with cfg.lr and cfg.weight_decay.
-            scheduler (torch.optim.lr_scheduler, optional): LR scheduler.
+            scheduler (bool, optional): Whether to use a learning rate scheduler.
             device (str): Training device ("cuda" or "cpu").
         """
         self.model = model.to(device)
@@ -199,15 +201,25 @@ class Trainer_base:
         self._best_iou = -1.0
 
         # Optimizer
-        self.opt = optimizer or torch.optim.AdamW(
-            self.model.parameters(), lr=self.cfg.lr, weight_decay=self.cfg.weight_decay
-        )
+        if optimizer:
+            self.opt = optimizer
+        else:
+            self.opt = torch.optim.AdamW(
+                self.model.parameters(),
+                lr=self.cfg.lr,
+                weight_decay=self.cfg.weight_decay,
+            )
+
+        # Scheduler (optional)
+        if scheduler:
+            self.sched = torch.optim.lr_scheduler.CosineAnnealingLR(
+                self.opt, T_max=self.cfg.epochs
+            )
+        else:
+            self.sched = None
 
         # Accuracy metric
         self.acc_metric = BinaryAccuracy().to(DEVICE)
-
-        # Scheduler (optional)
-        self.sched = scheduler
 
         # Create the dataloaders
         num_workers = max(
@@ -289,6 +301,10 @@ class Trainer_base:
             box_loss = 0.5 * l1 + 0.5 * d
         else:
             box_loss = l1
+
+        # print(
+        #     f"l1: {l1.item():.4f}, diou: {d.item():.4f} ---- pred_box: {pred_box01[0]} - t_box: {t_boxes01[0]}"
+        # )
 
         # Weighted total loss
         loss = self.cfg.cls_loss_w * cls_loss + self.cfg.box_loss_w * box_loss
@@ -386,7 +402,7 @@ class Trainer_base:
                 }
             )
 
-            # Always track best IoU
+            # Always track best IoU - Save checkpoint
             if vl["mean_iou"] > self._best_iou:
                 self._best_iou = vl["mean_iou"]
                 self.save_model(f"best_iou_model.pt", output_dir=self.cfg.output_dir)
@@ -399,18 +415,19 @@ class Trainer_base:
                 else (monitor_value > best_val)
             )
 
-            # Logging, print every n epochs
+            # Logging, print every n epochs, also print first and last epoch
             if (epoch == 1 or epoch == self.cfg.epochs) or (
                 epoch % self.cfg.logging_step == 0
             ):
-                print(
-                    f"Epoch {epoch:03d} | LR {self.opt.param_groups[0]['lr']:.2e} | "
-                    f"Train -- loss: {tr['loss']:.4f}, acc: {tr['acc']:.3f}, IoU: {tr['mean_iou']:.3f} | "
-                    f"Valid -- loss: {vl['loss']:.4f}, acc: {vl['acc']:.3f}, IoU: {vl['mean_iou']:.3f} | "
-                    f"Monitor({monitor}): {monitor_value:.4f}"
-                )
+                if self.cfg.verbose:
+                    print(
+                        f"Epoch {epoch:03d} | LR {self.opt.param_groups[0]['lr']:.2e} | "
+                        f"Train -- loss: {tr['loss']:.4f}, acc: {tr['acc']:.3f}, IoU: {tr['mean_iou']:.3f} | "
+                        f"Valid -- loss: {vl['loss']:.4f}, acc: {vl['acc']:.3f}, IoU: {vl['mean_iou']:.3f} | "
+                        f"Monitor({monitor}): {monitor_value:.4f}"
+                    )
 
-            # Early stopping check
+            # Early stopping check and save best monitored model (checkpoint)
             if better:
                 best_val = monitor_value
                 wait = 0
@@ -420,13 +437,24 @@ class Trainer_base:
             else:
                 wait += 1
                 if wait >= es_patience:
-                    print(f"\nEarly stopping at epoch {epoch}:\n")
-                    print(
-                        f"Best {monitor}: {best_val:.4f}\n"
-                        f"Train: loss: {tr['loss']:.4f}, acc: {tr['acc']:.3f}, IoU: {tr['mean_iou']:.3f}\n"
-                        f"Valid: loss: {vl['loss']:.4f}, acc: {vl['acc']:.3f}, IoU: {vl['mean_iou']:.3f}"
-                    )
+                    if self.cfg.verbose:
+                        print(f"\nEarly stopping at epoch {epoch}:\n")
+
+                        # Final logging when early stopping is triggered
+                        print(
+                            f"Best {monitor}: {best_val:.4f}\n"
+                            f"Train: loss: {tr['loss']:.4f}, acc: {tr['acc']:.3f}, IoU: {tr['mean_iou']:.3f}\n"
+                            f"Valid: loss: {vl['loss']:.4f}, acc: {vl['acc']:.3f}, IoU: {vl['mean_iou']:.3f}"
+                        )
                     break
+
+        # Final logging - when training completes without early stopping
+        if wait < es_patience and self.cfg.verbose:
+            print(
+                f"Best {monitor}: {best_val:.4f}\n"
+                f"Train: loss: {tr['loss']:.4f}, acc: {tr['acc']:.3f}, IoU: {tr['mean_iou']:.3f}\n"
+                f"Valid: loss: {vl['loss']:.4f}, acc: {vl['acc']:.3f}, IoU: {vl['mean_iou']:.3f}"
+            )
 
         return history
 
