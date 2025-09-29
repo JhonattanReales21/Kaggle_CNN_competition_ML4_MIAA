@@ -242,10 +242,14 @@ class AugmentedDataset(torch.utils.data.Dataset):
         img = img * std + mean
         img = (img.clamp(0, 1) * 255).byte().permute(1, 2, 0).numpy()
 
+        # ---- Rescale bbox to pixel values ----
+        s = self.base_dataset.img_size
+        box_px = [box[0] * s, box[1] * s, box[2] * s, box[3] * s]
+
         # ---- Albumentations transform ----
         transformed = self.aug(
             image=img,
-            bboxes=[box.tolist()],  # Albumentations expects bboxes as lists
+            bboxes=[box_px],  # Albumentations expects bboxes as lists
             labels=[label.item()],  # Labels must be in list format
         )
         img_np = transformed["image"]
@@ -258,10 +262,19 @@ class AugmentedDataset(torch.utils.data.Dataset):
             img_t
         )  # re-apply normalization
 
-        # Handle bbox (may be empty if augmentation crops it out)
+        # ---- Handle bbox ----
         if len(bboxes):
-            box_out = torch.tensor(bboxes[0], dtype=torch.float32)
+            # Normalize bbox back to [0,1]
+            bx = bboxes[0]
+            box_out = torch.tensor(
+                [bx[0] / s, bx[1] / s, bx[2] / s, bx[3] / s],
+                dtype=torch.float32,
+            )
         else:
-            box_out = box  # fallback to original bbox if none remain
+            # If bbox was removed by augmentation, fallback to original normalized box
+            box_out = box
 
-        return img_t, box_out, torch.tensor(label), fname
+        # Use labels returned by Albumentations (not original one)
+        label_out = torch.tensor(labels[0], dtype=torch.float32)
+
+        return img_t, box_out, label_out, fname

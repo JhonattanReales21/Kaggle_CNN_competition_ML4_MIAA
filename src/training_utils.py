@@ -7,6 +7,8 @@ from torchmetrics.classification import BinaryAccuracy
 import numpy as np
 import matplotlib.pyplot as plt
 
+from typing import Optional
+
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 import os
@@ -213,6 +215,8 @@ class Trainer_base:
             self.sched = torch.optim.lr_scheduler.CosineAnnealingLR(
                 self.opt, T_max=self.cfg.epochs
             )
+        else:
+            self.sched = None
 
         # Accuracy metric
         self.acc_metric = BinaryAccuracy().to(DEVICE)
@@ -297,6 +301,10 @@ class Trainer_base:
             box_loss = 0.5 * l1 + 0.5 * d
         else:
             box_loss = l1
+
+        # print(
+        #     f"l1: {l1.item():.4f}, diou: {d.item():.4f} ---- pred_box: {pred_box01[0]} - t_box: {t_boxes01[0]}"
+        # )
 
         # Weighted total loss
         loss = self.cfg.cls_loss_w * cls_loss + self.cfg.box_loss_w * box_loss
