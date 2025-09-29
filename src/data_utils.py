@@ -198,89 +198,70 @@ class MaskDataset(Dataset):
 
 
 class AugmentedDataset(torch.utils.data.Dataset):
-    def __init__(self, base_dataset, train_compose, train=True):
-        """
-        Wrapper around MaskDataset to apply Albumentations.
+    """
+    A dataset wrapper that applies Albumentations augmentations
+    to an existing dataset while handling normalization properly.
 
-        Args:
-            base_dataset: an instance of MaskDataset (returns img_t, bbox, cls, fname).
-            train (bool): if True, apply augmentations; if False, only normalization.
-            train_compose: albumentations.Compose object with desired augmentations.
-        """
+    Args:
+        base_dataset: The original dataset (must return (image_tensor, bbox, label, filename)).
+        aug: Albumentations augmentation pipeline (can be None for no augmentation).
+        mean: Normalization mean values (ImageNet defaults).
+        std: Normalization std values (ImageNet defaults).
+    """
+
+    def __init__(
+        self,
+        base_dataset,
+        aug=None,
+        mean=[0.485, 0.456, 0.406],
+        std=[0.229, 0.224, 0.225],
+    ):
         self.base_dataset = base_dataset
-        self.train = train
-        self.img_size = base_dataset.img_size  # needed for bbox scaling
-
-        if self.train:
-            self.augment = train_compose
-        else:
-            self.augment = A.Compose(
-                [],
-                bbox_params=A.BboxParams(format="pascal_voc", label_fields=["labels"]),
-            )
+        self.aug = aug
+        self.mean = mean
+        self.std = std
 
     def __len__(self):
+        # Length is the same as the base dataset
         return len(self.base_dataset)
 
     def __getitem__(self, idx):
-        # Get original sample from MaskDataset
-        img_t, target_box, target_cls, fname = self.base_dataset[idx]
+        # Get item from the base dataset
+        img_t, box, label, fname = self.base_dataset[idx]
 
-        # Convert tensor (C, H, W) -> numpy (H, W, C) in [0,255]
-        img_np = (img_t.permute(1, 2, 0).numpy() * 255).astype(np.uint8)
+        # If no augmentation pipeline is provided, return directly
+        if self.aug is None:
+            return img_t, box, label, fname
 
-        # Convert normalized box [0,1] -> absolute Pascal VOC [xmin, ymin, xmax, ymax]
-        x_min = target_box[0].item() * self.img_size
-        y_min = target_box[1].item() * self.img_size
-        x_max = target_box[2].item() * self.img_size
-        y_max = target_box[3].item() * self.img_size
-        box_abs = [x_min, y_min, x_max, y_max]
+        # ---- Denormalize tensor to numpy [0–255] ----
+        # Albumentations expects images as uint8 NumPy arrays in [0–255] range
+        # And (H, W, C) format
+        img = img_t.clone()
+        mean = torch.tensor(self.mean)[:, None, None]
+        std = torch.tensor(self.std)[:, None, None]
+        img = img * std + mean
+        img = (img.clamp(0, 1) * 255).byte().permute(1, 2, 0).numpy()
 
-        # Apply augmentations
-        augmented = self.augment(
-            image=img_np, bboxes=[box_abs], labels=[int(target_cls.item())]
+        # ---- Albumentations transform ----
+        transformed = self.aug(
+            image=img,
+            bboxes=[box.tolist()],  # Albumentations expects bboxes as lists
+            labels=[label.item()],  # Labels must be in list format
         )
+        img_np = transformed["image"]
+        bboxes = transformed["bboxes"]
+        labels = transformed["labels"]
 
-        aug_img = augmented["image"]
-        aug_boxes = augmented["bboxes"]
-        aug_labels = augmented["labels"]
+        # ---- Back to tensor (normalized again) ----
+        img_t = transforms.ToTensor()(img_np)  # convert NumPy (H,W,C) → tensor (C,H,W)
+        img_t = transforms.Normalize(self.mean, self.std)(
+            img_t
+        )  # re-apply normalization
 
-        # Convert back to torch tensor
-        aug_img = transforms.ToTensor()(aug_img)
-
-        if len(aug_boxes) == 0:
-            # No box survived augmentations -> fallback
-            aug_box = target_box
-            aug_label = target_cls
+        # Handle bbox (may be empty if augmentation crops it out)
+        if len(bboxes):
+            box_out = torch.tensor(bboxes[0], dtype=torch.float32)
         else:
-            # Convert absolute box back to normalized [0,1]
-            bx = np.array(aug_boxes[0], dtype=np.float32)
-            aug_box = torch.tensor(
-                [
-                    bx[0] / self.img_size,
-                    bx[1] / self.img_size,
-                    bx[2] / self.img_size,
-                    bx[3] / self.img_size,
-                ],
-                dtype=torch.float32,
-            )
-            aug_label = torch.tensor([float(aug_labels[0])], dtype=torch.float32)
+            box_out = box  # fallback to original bbox if none remain
 
-        return aug_img, aug_box, aug_label, fname
-
-
-# from torch.utils.data import DataLoader
-
-# # Create your base dataset
-# train_dataset = MaskDataset(df, Path("data/images"), img_size=256,
-#                             personalized_norm=False, cols=DEFAULT_COLS)
-
-# # Wrap with augmentations
-# train_dataset_aug = AugmentedDataset(train_dataset, train_compose, train=True)
-
-# # Validation dataset (no augmentations)
-# val_dataset = AugmentedDataset(train_dataset, train=False)
-
-# # Dataloaders
-# train_loader = DataLoader(train_dataset_aug, batch_size=16, shuffle=True)
-# val_loader = DataLoader(val_dataset, batch_size=16, shuffle=False)
+        return img_t, box_out, torch.tensor(label), fname
