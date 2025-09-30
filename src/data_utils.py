@@ -97,6 +97,65 @@ def show_raw_images_with_bboxes(df, indices, img_dir, cols=3):
     plt.show()
 
 
+def show_dataset_sample(dataset, idx, class_map=None, figure_size=(6, 6)):
+    """
+    Visualize a sample from a pytorch Dataset object with its bounding box and label.
+
+    Args:
+        dataset: instance of a pytorch Dataset object.
+        idx (int): index of the sample to visualize.
+        class_map (dict, optional): maps class ids -> class names.
+    """
+    # ---- Get sample from dataset ----
+    img_t, box, label, fname = dataset[idx]
+
+    # ---- Denormalize image ----
+    # (C,H,W) tensor back to numpy (H,W,C) in [0,1] range
+    mean = torch.tensor(dataset.mean)[:, None, None]
+    std = torch.tensor(dataset.std)[:, None, None]
+    img_denorm = img_t * std + mean
+    img_np = img_denorm.permute(1, 2, 0).cpu().numpy()
+    img_np = img_np.clip(0, 1)  # ensure valid range for display
+
+    # ---- Convert normalized bbox [0,1] to pixel coordinates ----
+    h, w = img_np.shape[:2]
+    x1, y1, x2, y2 = box.numpy()
+    x1, y1, x2, y2 = x1 * w, y1 * h, x2 * w, y2 * h
+
+    # ---- Get class name ----
+    try:
+        cls_id = int(label.item())
+    except:
+        cls_id = label[0]
+    cls_name = class_map[cls_id] if class_map else str(cls_id)
+
+    # ---- Plot image and bounding box ----
+    fig, ax = plt.subplots(1, figsize=figure_size)
+    ax.imshow(img_np)
+
+    # Draw bbox rectangle
+    rect = patches.Rectangle(
+        (x1, y1), x2 - x1, y2 - y1, linewidth=2, edgecolor="green", facecolor="none"
+    )
+    ax.add_patch(rect)
+
+    # Add class label text above the box
+    ax.text(
+        x1,
+        max(0, y1 - 5),
+        cls_name,
+        color="green",
+        fontsize=12,
+        bbox=dict(facecolor="white", alpha=0.7, edgecolor="none"),
+    )
+
+    # Set title and remove axes
+    ax.set_title(f"Index {idx} - {cls_name} - {fname[:10]}", fontsize=12)
+    ax.axis("off")
+    plt.show()
+
+
+## ---- Dataset classes ----
 class MaskDataset(Dataset):
     def __init__(
         self,
@@ -262,7 +321,7 @@ class AugmentedDataset(torch.utils.data.Dataset):
             img_t
         )  # re-apply normalization
 
-        # ---- Handle bbox ----
+        # ---- Handle bbox and label ----
         if len(bboxes):
             # Normalize bbox back to [0,1]
             bx = bboxes[0]
@@ -270,11 +329,12 @@ class AugmentedDataset(torch.utils.data.Dataset):
                 [bx[0] / s, bx[1] / s, bx[2] / s, bx[3] / s],
                 dtype=torch.float32,
             )
-        else:
-            # If bbox was removed by augmentation, fallback to original normalized box
-            box_out = box
 
-        # Use labels returned by Albumentations (not original one)
-        label_out = torch.tensor(labels[0], dtype=torch.float32)
+            label_out = torch.tensor(labels, dtype=torch.float32)
+        else:
+            # If bbox or labels were removed by augmentation, fallback to original
+            box_out = box
+            label_out = label
+            print(f"⚠️ Empty bboxes or labels for index {idx} after augmentation.")
 
         return img_t, box_out, label_out, fname
